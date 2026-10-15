@@ -17,6 +17,7 @@ EMBER is a responsive web app for desktop and mobile browsers. The target is a c
 - Session detection and sign-out.
 - Account-backed favourites loaded from PostgreSQL and a dedicated saved-music library view.
 - Playlist creation, sidebar playlist navigation, adding catalogue tracks and removing tracks from playlists.
+- Account-backed listening history: successful track starts are recorded in PostgreSQL and recent tracks are shown on the home view.
 - Authenticated Jamendo search through the `music-catalog` Edge Function.
 - Search results map to track title, artist, album art, duration, licence URL and stream URL.
 - Browser audio playback, seek and volume controls, next/previous track controls, queue panel.
@@ -35,13 +36,13 @@ EMBER is a responsive web app for desktop and mobile browsers. The target is a c
 7. Run `npm install` and `npm run build`, then test the live app.
 
 ## Known limitations / next work
-- Playlist renaming/editing, favourite artists and play history are not wired to the database yet.
+- Playlist renaming/editing and favourite-artist controls are not wired to the database yet.
 - Provider search currently starts after entering at least two characters.
 - Demo catalogue tracks are UI previews and have no audio stream.
 - Track availability and playback depend on the provider response and the track's permitted stream URL.
 - Audius integration, PWA install/offline support, richer queue behavior, tests and deployment are still upcoming.
-- Build status has not been verified in this environment.
-- No SQL has been applied to a live Supabase project by this repository update.
+- Frontend build verification is handled by GitHub Actions; this does not validate a deployed Edge Function or live provider credentials.
+- No SQL has been applied to a dedicated live EMBER Supabase project yet.
 
 ## Security and licensing
 - Keep provider credentials in Edge Function secrets.
