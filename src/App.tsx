@@ -21,6 +21,7 @@ type Track = {
   license?: string
   downloadAllowed: boolean
   source?: string
+  genreTags?: string[]
 }
 
 const demoTracks: Track[] = [
@@ -140,7 +141,8 @@ export default function App() {
             artist: String(item.artistName ?? 'Unknown artist'),
             album: String(item.album ?? 'Single'),
             duration: formatTime(duration),
-            genre: 'Music',
+            genre: Array.isArray(item.genreTags) && item.genreTags.length ? String(item.genreTags[0]) : 'Music',
+            genreTags: Array.isArray(item.genreTags) ? item.genreTags.map(String) : [],
             cover: 'linear-gradient(140deg,#c75a2b,#322019 75%)',
             coverUrl: coverUrl || undefined,
             audioUrl: typeof item.audioUrl === 'string' ? item.audioUrl : undefined,
@@ -171,7 +173,7 @@ export default function App() {
     const matchesQuery = session && query.trim().length >= 2
       ? true
       : `${track.title} ${track.artist} ${track.album} ${track.genre}`.toLowerCase().includes(query.toLowerCase())
-    return matchesQuery && (genre === 'All' || track.genre === genre || (track.source && genre === 'All'))
+    return matchesQuery && (genre === 'All' || track.genre.toLowerCase() === genre.toLowerCase() || (track.genreTags ?? []).some(tag => tag.toLowerCase() === genre.toLowerCase()))
   }), [sourceTracks, query, genre, session])
 
   const playTrack = (track: Track) => {
@@ -239,6 +241,7 @@ export default function App() {
 
   const handleSignOut = async () => {
     if (!supabase) return
+    audioRef.current?.pause()
     const { error } = await supabase.auth.signOut()
     if (error) setCatalogError(error.message)
     else {
