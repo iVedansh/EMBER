@@ -8,6 +8,7 @@ EMBER is a responsive, browser-based music streaming web app built with React, V
 - Dark/light theme preference and liked-track preference saved in the browser
 - Supabase email/password sign-in and account creation UI
 - Account-backed liked songs and a dedicated library page
+- Playlist creation, playlist selection, adding tracks to playlists, and removing tracks from a playlist
 - Authenticated live catalogue search through a Supabase Edge Function
 - Jamendo metadata mapping, album artwork and stream URL support
 - HTML audio playback controls, seek bar, volume control, next/previous track and queue panel
@@ -19,7 +20,7 @@ EMBER is a responsive, browser-based music streaming web app built with React, V
 
 The app now has the first working integration path for Supabase authentication and Jamendo catalogue search. To use it against a real provider, you must configure a Supabase project, deploy the SQL migration and Edge Function, and set the required provider secret. The default screen uses clearly labelled preview tracks until a signed-in user searches the live catalogue.
 
-**Not finished yet:** playlist creation/editing, play history persistence, favourite artists, Audius adapter, richer queue/shuffle/repeat behavior, PWA install/offline support, accessibility pass, automated test coverage and production deployment. A build has not been verified in this environment; run the build steps below before deploying.
+**Not finished yet:** playlist renaming/editing, play history persistence, favourite artists, Audius adapter, richer queue/shuffle/repeat behavior, PWA install/offline support, accessibility pass, automated test coverage and production deployment. A build has not been verified in this environment; run the build steps below before deploying.
 
 ## Run locally
 
