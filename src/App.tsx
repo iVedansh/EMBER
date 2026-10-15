@@ -8,6 +8,8 @@ import {
 } from 'lucide-react'
 import { supabase, supabaseConfigured } from './lib/supabase'
 
+type Playlist = { id: string; name: string; description?: string | null }
+
 type Track = {
   id: string | number
   title: string
@@ -73,6 +75,15 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [catalogTracks, setCatalogTracks] = useState<Track[]>([])
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([])
+  const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [activePlaylistId, setActivePlaylistId] = useState<string | null>(null)
+  const [playlistTracks, setPlaylistTracks] = useState<Track[]>([])
+  const [playlistDialog, setPlaylistDialog] = useState<'create' | 'add' | null>(null)
+  const [playlistName, setPlaylistName] = useState('')
+  const [playlistDescription, setPlaylistDescription] = useState('')
+  const [playlistBusy, setPlaylistBusy] = useState(false)
+  const [playlistError, setPlaylistError] = useState('')
+  const [addTrack, setAddTrack] = useState<Track | null>(null)
   const [catalogBusy, setCatalogBusy] = useState(false)
   const [catalogError, setCatalogError] = useState('')
   const [currentTime, setCurrentTime] = useState(0)
@@ -99,6 +110,9 @@ export default function App() {
       } else {
         setCatalogTracks([])
         setLibraryTracks([])
+        setPlaylists([])
+        setPlaylistTracks([])
+        setActivePlaylistId(null)
         setLiked(previous => previous.filter(id => typeof id === 'number'))
         setIsPlaying(false)
       }
@@ -149,6 +163,81 @@ export default function App() {
     void loadFavourites()
     return () => { active = false }
   }, [session?.user.id])
+
+  useEffect(() => {
+    const client = supabase
+    if (!client || !session) {
+      setPlaylists([])
+      setPlaylistTracks([])
+      setActivePlaylistId(null)
+      return
+    }
+    let active = true
+    const loadPlaylists = async () => {
+      const { data, error } = await client
+        .from('playlists')
+        .select('id, name, description')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false })
+      if (!active) return
+      if (error) {
+        setCatalogError('Could not load playlists. Check that the Supabase migration has been applied.')
+        return
+      }
+      const items = (data ?? []) as Playlist[]
+      setPlaylists(items)
+      setActivePlaylistId(currentId => currentId && items.some(item => item.id === currentId) ? currentId : null)
+    }
+    void loadPlaylists()
+    return () => { active = false }
+  }, [session?.user.id])
+
+  useEffect(() => {
+    const client = supabase
+    if (!client || !session || !activePlaylistId) {
+      setPlaylistTracks([])
+      return
+    }
+    let active = true
+    const loadPlaylistTracks = async () => {
+      const { data, error } = await client
+        .from('playlist_tracks')
+        .select('position, tracks(id, source, source_track_id, title, artist_name, album, cover_url, duration_seconds, genre_tags, licence_url, download_allowed)')
+        .eq('playlist_id', activePlaylistId)
+        .order('position', { ascending: true })
+      if (!active) return
+      if (error) {
+        setCatalogError('Could not load this playlist.')
+        return
+      }
+      const items = (data ?? []).map((row: { tracks: Record<string, unknown> | Record<string, unknown>[] | null }) => {
+        const item = Array.isArray(row.tracks) ? row.tracks[0] : row.tracks
+        if (!item || !item.source_track_id) return null
+        const tags = Array.isArray(item.genre_tags) ? item.genre_tags.map(String) : []
+        const source = String(item.source ?? 'jamendo')
+        const sourceTrackId = String(item.source_track_id)
+        return {
+          id: `${source}:${sourceTrackId}`,
+          databaseId: String(item.id ?? ''),
+          sourceTrackId,
+          title: String(item.title ?? 'Untitled'),
+          artist: String(item.artist_name ?? 'Unknown artist'),
+          album: String(item.album ?? 'Single'),
+          duration: formatTime(Number(item.duration_seconds ?? 0)),
+          genre: tags[0] ?? 'Music',
+          genreTags: tags,
+          cover: 'linear-gradient(140deg,#c75a2b,#322019 75%)',
+          coverUrl: String(item.cover_url ?? '') || undefined,
+          license: String(item.licence_url ?? '') || undefined,
+          downloadAllowed: item.download_allowed === true,
+          source: source === 'jamendo' ? 'Jamendo' : source,
+        } satisfies Track
+      }).filter(Boolean) as Track[]
+      setPlaylistTracks(items)
+    }
+    void loadPlaylistTracks()
+    return () => { active = false }
+  }, [session?.user.id, activePlaylistId])
 
   useEffect(() => {
     const term = query.trim()
@@ -308,6 +397,105 @@ export default function App() {
   }
   const genres = ['All', 'Electronic', 'Ambient', 'Indie', 'Jazz', 'Soul']
 
+  const activePlaylist = playlists.find(playlist => playlist.id === activePlaylistId)
+
+  const openCreatePlaylist = () => {
+    if (!session) {
+      setAuthMode('signin')
+      setAuthOpen(true)
+      setAuthMessage('Sign in to create and save playlists.')
+      return
+    }
+    setPlaylistName('')
+    setPlaylistDescription('')
+    setPlaylistError('')
+    setPlaylistDialog('create')
+  }
+
+  const openAddTrack = (track: Track) => {
+    if (!session) {
+      setAuthMode('signin')
+      setAuthOpen(true)
+      setAuthMessage('Sign in to save tracks to playlists.')
+      return
+    }
+    if (!track.databaseId) {
+      setCatalogError('Search the live catalogue to add playable tracks to a playlist.')
+      return
+    }
+    if (playlists.length === 0) {
+      setAddTrack(track)
+      setPlaylistDialog('create')
+      setPlaylistError('Create a playlist first. Then use the add button on a track to save it.')
+      return
+    }
+    setAddTrack(track)
+    setPlaylistError('')
+    setPlaylistDialog('add')
+  }
+
+  const createPlaylist = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!session || !supabase) return
+    const name = playlistName.trim()
+    if (!name) return
+    setPlaylistBusy(true)
+    setPlaylistError('')
+    try {
+      const { data, error } = await supabase
+        .from('playlists')
+        .insert({ user_id: session.user.id, name, description: playlistDescription.trim() || null })
+        .select('id, name, description')
+        .single()
+      if (error) throw error
+      const created = data as Playlist
+      setPlaylists(previous => [created, ...previous])
+      setActivePlaylistId(created.id)
+      setActiveNav('Playlist')
+      setPlaylistDialog(null)
+    } catch (error) {
+      setPlaylistError(error instanceof Error ? error.message : 'Could not create this playlist.')
+    } finally {
+      setPlaylistBusy(false)
+    }
+  }
+
+  const addTrackToPlaylist = async (playlistId: string) => {
+    if (!session || !supabase || !addTrack?.databaseId) return
+    setPlaylistBusy(true)
+    setPlaylistError('')
+    try {
+      const { data: lastRow, error: positionError } = await supabase
+        .from('playlist_tracks')
+        .select('position')
+        .eq('playlist_id', playlistId)
+        .order('position', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (positionError) throw positionError
+      const { error } = await supabase.from('playlist_tracks').insert({
+        playlist_id: playlistId,
+        track_id: addTrack.databaseId,
+        position: (lastRow?.position ?? -1) + 1,
+      })
+      if (error) throw error
+      if (playlistId === activePlaylistId) setPlaylistTracks(previous => [...previous, addTrack])
+      setPlaylistDialog(null)
+      setAddTrack(null)
+    } catch (error) {
+      setPlaylistError(error instanceof Error ? error.message : 'Could not add this track.')
+    } finally {
+      setPlaylistBusy(false)
+    }
+  }
+
+  const removeTrackFromPlaylist = async (track: Track) => {
+    if (!session || !supabase || !activePlaylistId || !track.databaseId) return
+    const { error } = await supabase.from('playlist_tracks').delete().eq('playlist_id', activePlaylistId).eq('track_id', track.databaseId)
+    if (error) setCatalogError('Could not remove this track from the playlist.')
+    else setPlaylistTracks(previous => previous.filter(item => item.id !== track.id))
+  }
+
   const handleAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setAuthMessage('')
@@ -368,9 +556,9 @@ export default function App() {
           </button>)}
         </nav>
         <div className="sidebar-rule" />
-        <div className="library-heading"><span className="eyebrow">PLAYLISTS</span><button className="icon-button" title="Create playlist" onClick={() => setCatalogError('Playlist creation is the next library feature. Sign-in and live catalogue are being connected first.')}><Plus size={17} /></button></div>
+        <div className="library-heading"><span className="eyebrow">PLAYLISTS</span><button className="icon-button" title="Create playlist" onClick={openCreatePlaylist}><Plus size={17} /></button></div>
         <button className="playlist-link" onClick={() => setActiveNav('Your library')}><span className="playlist-icon"><Heart size={15} fill="currentColor" /></span>Liked songs</button>
-        <button className="playlist-link" onClick={() => setActiveNav('Your library')}><span className="playlist-icon playlist-warm"><ListMusic size={15} /></span>Late night mix</button>
+        {session && playlists.map(playlist => <button key={playlist.id} className="playlist-link" onClick={() => { setActivePlaylistId(playlist.id); setActiveNav('Playlist') }}><span className="playlist-icon playlist-warm"><ListMusic size={15} /></span><span className="playlist-link-name">{playlist.name}</span></button>)}{session && playlists.length === 0 && <div className="sidebar-empty">No playlists yet</div>}
         <div className="sidebar-bottom">
           <div className="offline-note"><span className="status-dot" /><div><strong>{session ? 'Account connected' : 'Personal listening'}</strong><small>{session?.user.email ?? 'Open catalogue · no ads'}</small></div></div>
           <button className="theme-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />} Switch to {theme === 'dark' ? 'light' : 'dark'} mode</button>
@@ -404,7 +592,7 @@ export default function App() {
               <button className="row-number" onClick={() => playTrack(track)} aria-label={`Play ${track.title}`}>{current.id === track.id && isPlaying ? <AudioLines size={17} /> : <><span className="track-index">{String(index + 1).padStart(2, '0')}</span><Play className="row-play" size={16} fill="currentColor" /></>}</button>
               <button className="track-main" onClick={() => playTrack(track)}><Cover track={track} small /><span className="track-titles"><strong>{track.title}</strong><small>{track.artist}{track.source ? ` · ${track.source}` : ''}</small></span></button>
               <span className="album-name">{track.album}</span><span className="duration">{track.duration}</span>
-              <div className="row-actions"><button className={`icon-button like-button ${liked.includes(track.id) ? 'liked' : ''}`} title={liked.includes(track.id) ? 'Unlike track' : 'Like track'} onClick={() => void toggleLike(track)}><Heart size={17} fill={liked.includes(track.id) ? 'currentColor' : 'none'} /></button><button className="icon-button" title="More options" onClick={() => { setCurrent(track); setQueueOpen(!queueOpen) }}><MoreHorizontal size={19} /></button></div>
+              <div className="row-actions"><button className={`icon-button like-button ${liked.includes(track.id) ? 'liked' : ''}`} title={liked.includes(track.id) ? 'Unlike track' : 'Like track'} onClick={() => void toggleLike(track)}><Heart size={17} fill={liked.includes(track.id) ? 'currentColor' : 'none'} /></button><button className="icon-button" title="More options" onClick={() => openAddTrack(track)} title="Add to playlist"><Plus size={18} /></button></div>
             </div>)}
             {catalogBusy && <div className="loading-state"><LoaderCircle size={20} className="spin" /> Searching licensed music…</div>}
             {!catalogBusy && visibleTracks.length === 0 && <div className="empty-state">No tracks match that search. Try another title or mood.</div>}
@@ -421,7 +609,13 @@ export default function App() {
           </div>)}</div> : <div className="library-empty"><div className="empty-disc"><Heart size={25} /></div><h3>Your library is waiting.</h3><p>Search for a track you love and tap the heart to keep it here.</p><button className="auth-submit" onClick={() => setActiveNav('Discover')}>Discover music <span>↗</span></button></div>}
         </section>}
 
-        <section className={`bottom-grid ${activeNav === "Your library" ? "library-hidden" : ""}`}>
+        {activeNav === 'Playlist' && <section className="playlist-view">
+          <div className="library-intro"><div><div className="eyebrow">YOUR PLAYLIST</div><h2>{activePlaylist?.name ?? 'Playlist'}</h2><p>{activePlaylist?.description || 'A personal collection of tracks you want to hear again.'}</p></div><div className="library-total"><ListMusic size={18} /><strong>{playlistTracks.length}</strong><span>tracks</span></div></div>
+          <div className="section-heading"><div><div className="eyebrow">YOUR SELECTION</div><h2>Tracklist</h2></div><button className="text-button" onClick={() => setActiveNav('Discover')}>Add more music <span>↗</span></button></div>
+          {playlistTracks.length > 0 ? <div className="track-table"><div className="table-head"><span>#</span><span>TITLE</span><span>ALBUM</span><span>TIME</span><span /></div>{playlistTracks.map((track,index) => <div key={track.id} className={`track-row ${current.id === track.id ? 'now-playing' : ''}`}><button className="row-number" onClick={() => void playTrack(track)} aria-label={`Play ${track.title}`}>{String(index+1).padStart(2,'0')}</button><button className="track-main" onClick={() => void playTrack(track)}><Cover track={track} small /><span className="track-titles"><strong>{track.title}</strong><small>{track.artist}</small></span></button><span className="album-name">{track.album}</span><span className="duration">{track.duration}</span><div className="row-actions"><button className="icon-button" title="Remove from playlist" onClick={() => void removeTrackFromPlaylist(track)}><X size={17} /></button></div></div>)}</div> : <div className="library-empty"><div className="empty-disc"><ListMusic size={25} /></div><h3>This playlist is ready for a soundtrack.</h3><p>Find music in Discover, then use the plus button on a track to add it here.</p><button className="auth-submit" onClick={() => setActiveNav('Discover')}>Discover music <span>↗</span></button></div>}
+        </section>}
+
+        <section className={`bottom-grid ${activeNav === "Your library" || activeNav === "Playlist" ? "library-hidden" : ""}`}>
           <div className="feature-panel">
             <div className="eyebrow">MADE FOR YOUR EARS</div><h3>Your library.<br /><em>Your history.</em></h3><p>Build your own corner of the music world, one track at a time.</p><button className="outline-button" onClick={() => { if (!session) setAuthOpen(true); else setActiveNav('Your library') }}>Explore your library <span>↗</span></button>
             <div className="feature-decoration"><Disc3 size={104} strokeWidth={0.7} /></div>
@@ -439,6 +633,7 @@ export default function App() {
         <audio ref={audioRef} onTimeUpdate={e => setCurrentTime(e.currentTarget.currentTime)} onLoadedMetadata={e => setTrackDuration(e.currentTarget.duration)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onEnded={() => cycleTrack(1)} />
       </footer>
 
+      {playlistDialog && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !playlistBusy) setPlaylistDialog(null) }}><section className="auth-modal playlist-modal" role="dialog" aria-modal="true" aria-labelledby="playlist-dialog-title"><button className="modal-close icon-button" onClick={() => setPlaylistDialog(null)} aria-label="Close playlist dialog"><X size={18} /></button><div className="auth-emblem"><ListMusic size={22} /></div><div className="eyebrow">MAKE IT YOURS</div><h2 id="playlist-dialog-title">{playlistDialog === 'create' ? 'New playlist.' : 'Add to playlist.'}</h2><p>{playlistDialog === 'create' ? 'Give this collection a name. You can add tracks from Discover.' : addTrack ? `Choose where to save “${addTrack.title}”.` : 'Choose a playlist.'}</p>{playlistDialog === 'create' ? <form onSubmit={createPlaylist}><label>Playlist name<input required maxLength={80} value={playlistName} onChange={event => setPlaylistName(event.target.value)} placeholder="Late night mix" /></label><label>Description (optional)<input maxLength={180} value={playlistDescription} onChange={event => setPlaylistDescription(event.target.value)} placeholder="A mood, a moment, a memory…" /></label><button className="auth-submit" type="submit" disabled={playlistBusy}>{playlistBusy ? 'Creating…' : 'Create playlist'}</button></form> : <div className="playlist-choice-list">{playlists.map(playlist => <button key={playlist.id} className="playlist-choice" disabled={playlistBusy} onClick={() => void addTrackToPlaylist(playlist.id)}><span className="playlist-choice-icon"><ListMusic size={17} /></span><span><strong>{playlist.name}</strong><small>{playlist.description || 'Personal playlist'}</small></span><span className="mood-arrow">↗</span></button>)}<button className="outline-button create-another" onClick={openCreatePlaylist}><Plus size={15} /> Create a new playlist</button></div>}{playlistError && <div className="auth-message" role="status">{playlistError}</div>}</section></div>}
       {authOpen && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAuthOpen(false) }}><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="modal-close icon-button" onClick={() => setAuthOpen(false)} aria-label="Close sign in"><X size={18} /></button><div className="auth-emblem"><Music2 size={22} /></div><div className="eyebrow">YOUR MUSIC, YOUR SPACE</div><h2 id="auth-title">{authMode === 'signin' ? 'Welcome back.' : 'Make it yours.'}</h2><p>{authMode === 'signin' ? 'Sign in to search the live catalogue and start listening.' : 'Create an account to get started with EMBER.'}</p><form onSubmit={handleAuth}><label>Email address<input type="email" required autoComplete="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="you@example.com" /></label><label>Password<input type="password" required minLength={6} autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'} value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="At least 6 characters" /></label><button className="auth-submit" type="submit" disabled={authBusy}>{authBusy ? <LoaderCircle size={17} className="spin" /> : null}{authBusy ? 'Please wait…' : authMode === 'signin' ? 'Sign in' : 'Create account'}</button></form>{authMessage && <div className="auth-message" role="status">{authMessage}</div>}{!supabaseConfigured && <div className="auth-message">Setup needed: add the Supabase URL and publishable key to your local environment.</div>}<div className="auth-switch">{authMode === 'signin' ? "New to EMBER?" : 'Already have an account?'} <button onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthMessage('') }}>{authMode === 'signin' ? 'Create account' : 'Sign in'}</button></div></section></div>}
     </div>
   )
