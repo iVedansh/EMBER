@@ -298,6 +298,10 @@ export default function App() {
     if (result.error) {
       setLiked(old => wasLiked ? [...old, track.id] : old.filter(item => item !== track.id))
       setCatalogError('Could not update your saved music. Check your Supabase migration and try again.')
+    } else {
+      setLibraryTracks(old => wasLiked
+        ? old.filter(saved => saved.id !== track.id)
+        : [track, ...old.filter(saved => saved.id !== track.id)])
     }
   }
   const genres = ['All', 'Electronic', 'Ambient', 'Indie', 'Jazz', 'Soul']
