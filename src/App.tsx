@@ -105,10 +105,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!supabase || !session) return
+    const client = supabase
+    if (!client || !session) return
     let active = true
     const loadFavourites = async () => {
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('favourites')
         .select('tracks(id, source, source_track_id, title, artist_name, album, cover_url, duration_seconds, genre_tags, licence_url, download_allowed)')
         .eq('user_id', session.user.id)
@@ -117,8 +118,8 @@ export default function App() {
         setCatalogError('Could not load saved favourites from your account.')
         return
       }
-      const savedTracks = (data ?? []).map((row: { tracks: Record<string, unknown> | null }) => {
-        const item = row.tracks
+      const savedTracks = (data ?? []).map((row: { tracks: Record<string, unknown> | Record<string, unknown>[] | null }) => {
+        const item = Array.isArray(row.tracks) ? row.tracks[0] : row.tracks
         if (!item || !item.source_track_id) return null
         const tags = Array.isArray(item.genre_tags) ? item.genre_tags.map(String) : []
         const source = String(item.source ?? 'jamendo')
