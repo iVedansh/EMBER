@@ -1,5 +1,4 @@
-[project]
-# Link this folder to a dedicated Supabase project before deployment.
+project_id = "ember-music"
 
 [functions.music-catalog]
 verify_jwt = true
