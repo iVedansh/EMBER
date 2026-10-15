@@ -23,6 +23,7 @@ type Track = {
   source?: string
   genreTags?: string[]
   databaseId?: string
+  sourceTrackId?: string
 }
 
 const demoTracks: Track[] = [
@@ -71,6 +72,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
   const [catalogTracks, setCatalogTracks] = useState<Track[]>([])
+  const [libraryTracks, setLibraryTracks] = useState<Track[]>([])
   const [catalogBusy, setCatalogBusy] = useState(false)
   const [catalogError, setCatalogError] = useState('')
   const [currentTime, setCurrentTime] = useState(0)
@@ -108,20 +110,38 @@ export default function App() {
     const loadFavourites = async () => {
       const { data, error } = await supabase
         .from('favourites')
-        .select('tracks(source, source_track_id)')
+        .select('tracks(id, source, source_track_id, title, artist_name, album, cover_url, duration_seconds, genre_tags, licence_url, download_allowed)')
         .eq('user_id', session.user.id)
       if (!active) return
       if (error) {
         setCatalogError('Could not load saved favourites from your account.')
         return
       }
-      const storedIds = (data ?? [])
-        .map((row: { tracks: { source?: string; source_track_id?: string } | null }) =>
-          row.tracks?.source && row.tracks?.source_track_id
-            ? `${row.tracks.source}:${row.tracks.source_track_id}`
-            : null)
-        .filter((id: string | null): id is string => Boolean(id))
-      setLiked(previous => [...previous.filter(id => typeof id === 'number'), ...storedIds])
+      const savedTracks = (data ?? []).map((row: { tracks: Record<string, unknown> | null }) => {
+        const item = row.tracks
+        if (!item || !item.source_track_id) return null
+        const tags = Array.isArray(item.genre_tags) ? item.genre_tags.map(String) : []
+        const source = String(item.source ?? 'jamendo')
+        const sourceTrackId = String(item.source_track_id)
+        return {
+          id: `${source}:${sourceTrackId}`,
+          databaseId: String(item.id ?? ''),
+          sourceTrackId,
+          title: String(item.title ?? 'Untitled'),
+          artist: String(item.artist_name ?? 'Unknown artist'),
+          album: String(item.album ?? 'Single'),
+          duration: formatTime(Number(item.duration_seconds ?? 0)),
+          genre: tags[0] ?? 'Music',
+          genreTags: tags,
+          cover: 'linear-gradient(140deg,#c75a2b,#322019 75%)',
+          coverUrl: String(item.cover_url ?? '') || undefined,
+          license: String(item.licence_url ?? '') || undefined,
+          downloadAllowed: item.download_allowed === true,
+          source: source === 'jamendo' ? 'Jamendo' : source,
+        } satisfies Track
+      }).filter((track): track is Track => track !== null)
+      setLibraryTracks(savedTracks)
+      setLiked(previous => [...previous.filter(id => typeof id === 'number'), ...savedTracks.map(track => track.id)])
     }
     void loadFavourites()
     return () => { active = false }
@@ -164,6 +184,7 @@ export default function App() {
           return {
             id: `jamendo:${String(item.sourceTrackId ?? '')}`,
             databaseId: typeof item.databaseId === 'string' ? item.databaseId : undefined,
+            sourceTrackId: String(item.sourceTrackId ?? ''),
             title: String(item.title ?? 'Untitled'),
             artist: String(item.artistName ?? 'Unknown artist'),
             album: String(item.album ?? 'Single'),
@@ -203,19 +224,50 @@ export default function App() {
     return matchesQuery && (genre === 'All' || track.genre.toLowerCase() === genre.toLowerCase() || (track.genreTags ?? []).some(tag => tag.toLowerCase() === genre.toLowerCase()))
   }), [sourceTracks, query, genre, session])
 
-  const playTrack = (track: Track) => {
+  const playTrack = async (track: Track) => {
     setCurrent(track)
     setCurrentTime(0)
     setTrackDuration(0)
-    if (track.audioUrl && audioRef.current) {
-      audioRef.current.src = track.audioUrl
+    let playableTrack = track
+
+    if (!playableTrack.audioUrl && playableTrack.sourceTrackId && session && supabaseConfigured) {
+      setCatalogBusy(true)
+      try {
+        const response = await fetch(import.meta.env.VITE_SUPABASE_URL + '/functions/v1/music-catalog?id=' + encodeURIComponent(playableTrack.sourceTrackId), {
+          headers: {
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            Authorization: 'Bearer ' + session.access_token,
+          },
+        })
+        const payload = await response.json() as { tracks?: Array<Record<string, unknown>>; error?: string }
+        if (!response.ok) throw new Error(payload.error ?? 'Could not load this stream.')
+        const item = payload.tracks?.[0]
+        if (item && typeof item.audioUrl === 'string' && item.audioUrl) {
+          playableTrack = {
+            ...playableTrack,
+            audioUrl: item.audioUrl,
+            coverUrl: String(item.coverUrl ?? playableTrack.coverUrl ?? ''),
+            license: String(item.licenceUrl ?? playableTrack.license ?? ''),
+            downloadAllowed: item.downloadAllowed === true,
+          }
+        }
+      } catch (error) {
+        setCatalogError(error instanceof Error ? error.message : 'Could not load this stream.')
+      } finally {
+        setCatalogBusy(false)
+      }
+    }
+
+    setCurrent(playableTrack)
+    if (playableTrack.audioUrl && audioRef.current) {
+      audioRef.current.src = playableTrack.audioUrl
       void audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
         setIsPlaying(false)
         setCatalogError('This track could not start. Try another result.')
       })
     } else {
       setIsPlaying(false)
-      if (track.source) setCatalogError('This result has no playable stream URL. Check the provider response and try another track.')
+      if (playableTrack.source) setCatalogError('This track has no playable stream URL right now. Try another track.')
     }
   }
 
@@ -325,7 +377,7 @@ export default function App() {
         </header>
 
         <section className="welcome-row">
-          <div><div className="eyebrow welcome-label"><span className="live-dot" /> YOUR SOUND, YOUR RULES</div><h1>Find your<br /><em>frequency.</em></h1><p className="intro">A little space for the music that moves you.</p></div>
+          <div><div className="eyebrow welcome-label"><span className="live-dot" /> YOUR SOUND, YOUR RULES</div><h1>{activeNav === "Discover" ? <>Explore your<br /><em>soundscape.</em></> : activeNav === "Your library" ? <>Your music.<br /><em>Your world.</em></> : <>Find your<br /><em>frequency.</em></>}</h1><p className="intro">{activeNav === "Discover" ? "Search a growing catalogue of independent music." : activeNav === "Your library" ? "Everything you save, gathered in one place." : "A little space for the music that moves you."}</p></div>
           <div className="hero-art" aria-hidden="true"><div className="hero-disc"><div className="disc-inner"><div className="disc-core" /></div></div><div className="hero-sticker">SIDE A<br /><strong>VOL. 001</strong></div><span className="hero-line line-one" /><span className="hero-line line-two" /></div>
         </section>
 
@@ -336,7 +388,7 @@ export default function App() {
 
         {catalogError && <div className="notice-banner" role="status"><span>{catalogError}</span><button className="icon-button" onClick={() => setCatalogError('')} aria-label="Dismiss notice"><X size={15} /></button>{!session && query.trim().length >= 2 && <button className="notice-action" onClick={() => { setAuthOpen(true); setAuthMode('signin'); setAuthMessage('') }}>Sign in to search live music</button>}</div>}
 
-        <section className="section-block">
+        <section className={`section-block ${activeNav === "Your library" ? "library-hidden" : ""}`}>
           <div className="section-heading"><div><div className="eyebrow">{query.trim().length >= 2 && session ? 'JAMENDO CATALOGUE' : 'THE ROTATION'}</div><h2>{catalogBusy ? 'Finding your sound…' : query ? 'Search results' : 'A good place to start'}</h2></div><button className="text-button" onClick={() => { setQuery(''); setGenre('All'); setCatalogError('') }}>View all <span>↗</span></button></div>
           <div className="genre-row">{genres.map(g => <button key={g} className={`genre-chip ${genre === g ? 'selected' : ''}`} onClick={() => setGenre(g)}>{g}</button>)}</div>
           <div className="track-table">
@@ -353,7 +405,16 @@ export default function App() {
           <div className="prototype-note"><span>i</span>{session ? 'Search results come from Jamendo. Playback is available for tracks with a stream URL; download rights are checked separately.' : 'Preview tracks are samples. Sign in to search the live catalogue and stream available tracks.'}</div>
         </section>
 
-        <section className="bottom-grid">
+        {activeNav === 'Your library' && <section className="library-view">
+          <div className="library-intro"><div><div className="eyebrow">YOUR COLLECTION</div><h2>Saved for later.</h2><p>Your liked tracks stay connected to your account across sessions.</p></div><div className="library-total"><Heart size={18} fill="currentColor" /><strong>{libraryTracks.length}</strong><span>saved tracks</span></div></div>
+          <div className="section-heading"><div><div className="eyebrow">YOUR PICKS</div><h2>Liked music</h2></div><button className="text-button" onClick={() => setActiveNav('Discover')}>Discover more <span>↗</span></button></div>
+          {libraryTracks.length > 0 ? <div className="library-track-grid">{libraryTracks.map((track, index) => <div className="library-card" key={track.id}>
+            <button className="library-card-play" onClick={() => void playTrack(track)} aria-label={`Play ${track.title}`}><Cover track={track} /><span className="library-play-badge"><Play size={17} fill="currentColor" /></span></button>
+            <div className="library-card-meta"><strong>{track.title}</strong><small>{track.artist}</small><div className="library-card-actions"><span>{track.duration}</span><button className="icon-button liked" title="Remove from liked songs" onClick={() => void toggleLike(track)}><Heart size={16} fill="currentColor" /></button></div></div>
+          </div>)}</div> : <div className="library-empty"><div className="empty-disc"><Heart size={25} /></div><h3>Your library is waiting.</h3><p>Search for a track you love and tap the heart to keep it here.</p><button className="auth-submit" onClick={() => setActiveNav('Discover')}>Discover music <span>↗</span></button></div>}
+        </section>}
+
+        <section className={`bottom-grid ${activeNav === "Your library" ? "library-hidden" : ""}`}>
           <div className="feature-panel">
             <div className="eyebrow">MADE FOR YOUR EARS</div><h3>Your library.<br /><em>Your history.</em></h3><p>Build your own corner of the music world, one track at a time.</p><button className="outline-button" onClick={() => { if (!session) setAuthOpen(true); else setActiveNav('Your library') }}>Explore your library <span>↗</span></button>
             <div className="feature-decoration"><Disc3 size={104} strokeWidth={0.7} /></div>
