@@ -1,0 +1,5 @@
+[project]
+# Link this folder to a dedicated Supabase project before deployment.
+
+[functions.music-catalog]
+verify_jwt = true
