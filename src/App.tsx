@@ -140,7 +140,7 @@ export default function App() {
           downloadAllowed: item.download_allowed === true,
           source: source === 'jamendo' ? 'Jamendo' : source,
         } satisfies Track
-      }).filter((track): track is Track => track !== null)
+      }).filter(Boolean) as Track[]
       setLibraryTracks(savedTracks)
       setLiked(previous => [...previous.filter(id => typeof id === 'number'), ...savedTracks.map(track => track.id)])
     }
