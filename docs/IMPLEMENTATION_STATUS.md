@@ -1,38 +1,49 @@
 # EMBER implementation status
 
-## Chosen architecture
-- React + Vite + TypeScript frontend / installable PWA target.
-- Supabase Auth and managed PostgreSQL for profiles and user-owned library data.
+## Product direction
+EMBER is a responsive web app for desktop and mobile browsers. The target is a cohesive music-streaming website, with PWA support planned after the main product flows are stable.
+
+## Architecture
+- React + Vite + TypeScript frontend.
+- Supabase Auth and managed PostgreSQL for accounts and user-owned library data.
 - Supabase Edge Functions as the secure server-side boundary for music providers.
-- Jamendo as the first provider, Audius as the second adapter.
-- Browser streams directly from provider URLs; the server does not re-host copyrighted audio.
-- Redis is deferred until measured catalogue traffic justifies a separate cache.
+- Jamendo is the first catalogue adapter; Audius is planned as a second adapter.
+- Browser audio playback uses the HTML audio element and provider stream URLs.
+- Redis is deferred until measured traffic justifies a separate cache.
 
-## Delivered in this increment
-- Supabase client bootstrap, optional until environment values are configured.
-- Browser-safe `.env.example` using the publishable key only.
-- Initial SQL schema for profiles, catalogue metadata, favourites, favourite artists, playlists, playlist tracks, and play history.
-- RLS enabled and ownership policies included for user-owned tables.
+## Implemented in the current branch
+- Responsive EMBER interface and dark/light theme.
+- Sign-in and account-creation form using Supabase email/password auth.
+- Session detection and sign-out.
+- Authenticated Jamendo search through the `music-catalog` Edge Function.
+- Search results map to track title, artist, album art, duration, licence URL and stream URL.
+- Browser audio playback, seek and volume controls, next/previous track controls, queue panel.
+- Browser-persisted theme and liked-track preferences for the current device.
+- Initial SQL schema for profiles, tracks, favourites, favourite artists, playlists, playlist tracks and play history.
+- RLS policies on user-owned tables.
 - Profile auto-creation trigger.
-- JWT-protected `music-catalog` Edge Function scaffold that keeps the Jamendo client ID server-side.
-- Current UI remains usable in preview mode without credentials.
 
-## Configure locally
+## Required setup before live testing
 1. Copy `.env.example` to `.env.local`.
-2. Add the Supabase project URL and publishable key from the Supabase Connect dialog.
-3. Install dependencies with `npm install`.
-4. Run `npm run dev`.
+2. Fill in the Supabase URL and publishable key.
+3. Review and apply `supabase/migrations/20261015000100_music_library.sql`.
+4. Set Edge Function secrets `JAMENDO_CLIENT_ID` and `APP_ORIGIN`.
+5. Deploy `music-catalog` with JWT verification enabled.
+6. Enable email/password authentication in Supabase.
+7. Run `npm install` and `npm run build`, then test the live app.
 
-## Configure Supabase
-1. Review and apply `supabase/migrations/20261015000100_music_library.sql` to a dedicated EMBER project.
-2. Set Edge Function secrets: `JAMENDO_CLIENT_ID` and `APP_ORIGIN`.
-3. Deploy `music-catalog` with JWT verification enabled.
-4. Add sign-in UI and use the current Supabase session when invoking the function.
-5. Test RLS using two separate user accounts before production use.
+## Known limitations / next work
+- Current favourite state is stored in browser storage, not yet synced to the Supabase favourites table.
+- Playlist creation/editing and play history are not wired to the database yet.
+- Provider search currently starts after entering at least two characters.
+- Demo catalogue tracks are UI previews and have no audio stream.
+- Track availability and playback depend on the provider response and the track's permitted stream URL.
+- Audius integration, PWA install/offline support, richer queue behavior, tests and deployment are still upcoming.
+- Build status has not been verified in this environment.
+- No SQL has been applied to a live Supabase project by this repository update.
 
-## Important limitations
-- This increment does not connect to any existing Supabase project or apply SQL to a live database.
-- The current visual track list is still mock data; the Edge Function is not wired into the UI.
-- Authentication UI, real streaming/player state, provider adapter tests, Audius adapter, Redis, PWA offline support, and full history/playlist flows remain upcoming.
-- Never put a Supabase secret/service-role key or music-provider secret in a `VITE_*` variable.
-- Only expose downloads when the source explicitly allows it; preserve attribution and licence information.
+## Security and licensing
+- Keep provider credentials in Edge Function secrets.
+- Never expose a Supabase secret/service-role key in a frontend environment variable.
+- Keep JWT verification enabled for the catalogue function.
+- Preserve provider attribution/licence information and expose downloads only when explicitly permitted.
