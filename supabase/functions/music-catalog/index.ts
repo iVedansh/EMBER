@@ -1,8 +1,7 @@
 // Secure provider proxy for EMBER. Deploy with JWT verification enabled.
-// Set JAMENDO_CLIENT_ID as a Supabase Edge Function secret.
-// No provider credentials are sent to the browser.
-
+// Jamendo credentials and catalogue writes stay on the server.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": Deno.env.get("APP_ORIGIN") ?? "*",
@@ -18,6 +17,22 @@ function respond(body: unknown, status = 200) {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "GET") return respond({ error: "Method not allowed" }, 405);
+
+  const authorization = req.headers.get("Authorization");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!authorization || !supabaseUrl || !anonKey || !serviceRoleKey) {
+    return respond({ error: "Catalogue service is not configured." }, 503);
+  }
+
+  // Verify the calling user's identity before allowing catalogue requests.
+  const authClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authorization } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: authData, error: authError } = await authClient.auth.getUser();
+  if (authError || !authData.user) return respond({ error: "Please sign in to search the catalogue." }, 401);
 
   const url = new URL(req.url);
   const query = (url.searchParams.get("q") ?? "").trim().slice(0, 120);
@@ -65,9 +80,42 @@ Deno.serve(async (req: Request) => {
         licenceUrl: String(t.license_ccurl ?? ""),
         downloadAllowed: allowed,
       };
-    });
+    }).filter((track: { sourceTrackId: string }) => track.sourceTrackId.length > 0);
 
-    return respond({ tracks, page, source: "jamendo" });
+    // Persist safe catalogue metadata so authenticated users can save favourites.
+    // The provider's stream URL is deliberately not stored in the public catalogue table.
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const rows = tracks.map((track: Record<string, unknown>) => ({
+      source: "jamendo",
+      source_track_id: String(track.sourceTrackId),
+      title: String(track.title),
+      artist_id: String(track.artistId),
+      artist_name: String(track.artistName),
+      album: String(track.album),
+      cover_url: String(track.coverUrl),
+      duration_seconds: Number(track.durationSeconds),
+      genre_tags: Array.isArray(track.genreTags) ? track.genreTags : [],
+      licence_url: String(track.licenceUrl),
+      download_allowed: track.downloadAllowed === true,
+    }));
+
+    let databaseIds = new Map<string, string>();
+    if (rows.length > 0) {
+      const { data: stored, error: storeError } = await admin
+        .from("tracks")
+        .upsert(rows, { onConflict: "source,source_track_id" })
+        .select("id,source_track_id");
+      if (storeError) return respond({ error: "Could not save catalogue metadata." }, 502);
+      databaseIds = new Map((stored ?? []).map((row: { id: string; source_track_id: string }) => [row.source_track_id, row.id]));
+    }
+
+    const resultTracks = tracks.map((track: Record<string, unknown>) => ({
+      ...track,
+      databaseId: databaseIds.get(String(track.sourceTrackId)) ?? null,
+    }));
+    return respond({ tracks: resultTracks, page, source: "jamendo" });
   } catch {
     return respond({ error: "Could not reach the music provider. Try again shortly." }, 502);
   }
