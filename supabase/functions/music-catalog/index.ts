@@ -36,8 +36,9 @@ Deno.serve(async (req: Request) => {
 
   const url = new URL(req.url);
   const query = (url.searchParams.get("q") ?? "").trim().slice(0, 120);
+  const sourceTrackId = (url.searchParams.get("id") ?? "").trim().slice(0, 100);
   const page = Math.max(1, Math.min(100, Number(url.searchParams.get("page") ?? "1") || 1));
-  if (query.length < 2) return respond({ tracks: [], page, source: "jamendo" });
+  if (!sourceTrackId && query.length < 2) return respond({ tracks: [], page, source: "jamendo" });
 
   const clientId = Deno.env.get("JAMENDO_CLIENT_ID");
   if (!clientId) return respond({ error: "Music catalogue is not configured yet." }, 503);
@@ -48,7 +49,7 @@ Deno.serve(async (req: Request) => {
     format: "json",
     limit: "20",
     offset: String((page - 1) * 20),
-    namesearch: query,
+    ...(sourceTrackId ? { id: sourceTrackId } : { namesearch: query }),
     audioformat: "mp32",
     include: "licenses,musicinfo",
   }).toString();
