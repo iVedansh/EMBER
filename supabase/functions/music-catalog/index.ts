@@ -56,6 +56,7 @@ Deno.serve(async (req: Request) => {
         artistName: String(t.artist_name ?? "Unknown artist"),
         album: String(t.album_name ?? ""),
         coverUrl: String(t.album_image ?? t.image ?? ""),
+        audioUrl: String(t.audio ?? ""),
         durationSeconds: Number(t.duration ?? 0),
         genreTags: [],
         licenceUrl: String(t.license_ccurl ?? ""),
