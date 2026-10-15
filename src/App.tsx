@@ -22,6 +22,7 @@ type Track = {
   downloadAllowed: boolean
   source?: string
   genreTags?: string[]
+  databaseId?: string
 }
 
 const demoTracks: Track[] = [
@@ -102,6 +103,31 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!supabase || !session) return
+    let active = true
+    const loadFavourites = async () => {
+      const { data, error } = await supabase
+        .from('favourites')
+        .select('tracks(source, source_track_id)')
+        .eq('user_id', session.user.id)
+      if (!active) return
+      if (error) {
+        setCatalogError('Could not load saved favourites from your account.')
+        return
+      }
+      const storedIds = (data ?? [])
+        .map((row: { tracks: { source?: string; source_track_id?: string } | null }) =>
+          row.tracks?.source && row.tracks?.source_track_id
+            ? `${row.tracks.source}:${row.tracks.source_track_id}`
+            : null)
+        .filter((id: string | null): id is string => Boolean(id))
+      setLiked(previous => [...previous.filter(id => typeof id === 'number'), ...storedIds])
+    }
+    void loadFavourites()
+    return () => { active = false }
+  }, [session?.user.id])
+
+  useEffect(() => {
     const term = query.trim()
     if (term.length < 2) {
       setCatalogTracks([])
@@ -137,6 +163,7 @@ export default function App() {
           const coverUrl = String(item.coverUrl ?? '')
           return {
             id: `jamendo:${String(item.sourceTrackId ?? '')}`,
+            databaseId: typeof item.databaseId === 'string' ? item.databaseId : undefined,
             title: String(item.title ?? 'Untitled'),
             artist: String(item.artistName ?? 'Unknown artist'),
             album: String(item.album ?? 'Single'),
@@ -206,7 +233,20 @@ export default function App() {
     }
   }
 
-  const toggleLike = (id: string | number) => setLiked(old => old.includes(id) ? old.filter(item => item !== id) : [...old, id])
+  const toggleLike = async (track: Track) => {
+    const wasLiked = liked.includes(track.id)
+    setLiked(old => wasLiked ? old.filter(item => item !== track.id) : [...old, track.id])
+    if (!session || !supabase || !track.databaseId) return
+
+    const result = wasLiked
+      ? await supabase.from('favourites').delete().eq('user_id', session.user.id).eq('track_id', track.databaseId)
+      : await supabase.from('favourites').insert({ user_id: session.user.id, track_id: track.databaseId })
+
+    if (result.error) {
+      setLiked(old => wasLiked ? [...old, track.id] : old.filter(item => item !== track.id))
+      setCatalogError('Could not update your saved music. Check your Supabase migration and try again.')
+    }
+  }
   const genres = ['All', 'Electronic', 'Ambient', 'Indie', 'Jazz', 'Soul']
 
   const handleAuth = async (event: FormEvent<HTMLFormElement>) => {
@@ -305,7 +345,7 @@ export default function App() {
               <button className="row-number" onClick={() => playTrack(track)} aria-label={`Play ${track.title}`}>{current.id === track.id && isPlaying ? <AudioLines size={17} /> : <><span className="track-index">{String(index + 1).padStart(2, '0')}</span><Play className="row-play" size={16} fill="currentColor" /></>}</button>
               <button className="track-main" onClick={() => playTrack(track)}><Cover track={track} small /><span className="track-titles"><strong>{track.title}</strong><small>{track.artist}{track.source ? ` · ${track.source}` : ''}</small></span></button>
               <span className="album-name">{track.album}</span><span className="duration">{track.duration}</span>
-              <div className="row-actions"><button className={`icon-button like-button ${liked.includes(track.id) ? 'liked' : ''}`} title={liked.includes(track.id) ? 'Unlike track' : 'Like track'} onClick={() => toggleLike(track.id)}><Heart size={17} fill={liked.includes(track.id) ? 'currentColor' : 'none'} /></button><button className="icon-button" title="More options" onClick={() => { setCurrent(track); setQueueOpen(!queueOpen) }}><MoreHorizontal size={19} /></button></div>
+              <div className="row-actions"><button className={`icon-button like-button ${liked.includes(track.id) ? 'liked' : ''}`} title={liked.includes(track.id) ? 'Unlike track' : 'Like track'} onClick={() => void toggleLike(track)}><Heart size={17} fill={liked.includes(track.id) ? 'currentColor' : 'none'} /></button><button className="icon-button" title="More options" onClick={() => { setCurrent(track); setQueueOpen(!queueOpen) }}><MoreHorizontal size={19} /></button></div>
             </div>)}
             {catalogBusy && <div className="loading-state"><LoaderCircle size={20} className="spin" /> Searching licensed music…</div>}
             {!catalogBusy && visibleTracks.length === 0 && <div className="empty-state">No tracks match that search. Try another title or mood.</div>}
@@ -325,7 +365,7 @@ export default function App() {
       {queueOpen && <aside className="queue-panel"><div className="section-heading compact"><div><div className="eyebrow">UP NEXT</div><h2>Your queue</h2></div><button className="icon-button" onClick={() => setQueueOpen(false)} aria-label="Close queue"><X size={16} /></button></div>{(query.trim().length >= 2 && session && catalogTracks.length ? catalogTracks : demoTracks).filter(t => t.id !== current.id).slice(0, 5).map(t => <button key={t.id} className="queue-track" onClick={() => playTrack(t)}><Cover track={t} small /><span><strong>{t.title}</strong><small>{t.artist}</small></span><Play size={15} /></button>)}</aside>}
 
       <footer className="player-bar">
-        <div className="playing-track"><Cover track={current} small /><div className="playing-meta"><strong>{current.title}</strong><small>{current.artist}</small></div>{current.license && <a className="license-link" href={current.license} target="_blank" rel="noreferrer" title="View track licence"><ExternalLink size={13} /></a>}<button className={`icon-button like-button ${liked.includes(current.id) ? 'liked' : ''}`} onClick={() => toggleLike(current.id)} title="Like current track"><Heart size={17} fill={liked.includes(current.id) ? 'currentColor' : 'none'} /></button></div>
+        <div className="playing-track"><Cover track={current} small /><div className="playing-meta"><strong>{current.title}</strong><small>{current.artist}</small></div>{current.license && <a className="license-link" href={current.license} target="_blank" rel="noreferrer" title="View track licence"><ExternalLink size={13} /></a>}<button className={`icon-button like-button ${liked.includes(current.id) ? 'liked' : ''}`} onClick={() => void toggleLike(current)} title="Like current track"><Heart size={17} fill={liked.includes(current.id) ? 'currentColor' : 'none'} /></button></div>
         <div className="player-controls"><div className="control-buttons"><button className="player-icon" title="Shuffle" onClick={() => setCatalogError('Shuffle mode will be added with the full queue controls.')}><Shuffle size={16} /></button><button className="player-icon" title="Previous track" onClick={() => cycleTrack(-1)}><SkipBack size={18} fill="currentColor" /></button><button className="play-button" onClick={togglePlay} title={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}</button><button className="player-icon" title="Next track" onClick={() => cycleTrack(1)}><SkipForward size={18} fill="currentColor" /></button><button className="player-icon" title="Repeat" onClick={() => setCatalogError('Repeat mode will be added with the full queue controls.')}><Repeat2 size={16} /></button></div><div className="progress-row"><span>{formatTime(currentTime)}</span><input aria-label="Track progress" className="progress-slider" type="range" min="0" max={trackDuration || 100} value={Math.min(currentTime, trackDuration || 100)} onChange={e => { const next = Number(e.target.value); if (audioRef.current) audioRef.current.currentTime = next; setCurrentTime(next) }} /><span>{formatTime(trackDuration || Number(current.duration.split(':')[0]) * 60 + Number(current.duration.split(':')[1]))}</span></div></div>
         <div className="player-extra"><button className="player-icon" onClick={() => setQueueOpen(!queueOpen)} title="Toggle queue"><ListMusic size={18} /></button><Volume2 size={17} /><input className="volume-slider" aria-label="Volume" type="range" min="0" max="1" step="0.01" defaultValue="0.65" onChange={e => { if (audioRef.current) audioRef.current.volume = Number(e.target.value) }} /></div>
         <audio ref={audioRef} onTimeUpdate={e => setCurrentTime(e.currentTarget.currentTime)} onLoadedMetadata={e => setTrackDuration(e.currentTarget.duration)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onEnded={() => cycleTrack(1)} />
