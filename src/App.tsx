@@ -583,7 +583,7 @@ export default function App() {
 
         {catalogError && <div className="notice-banner" role="status"><span>{catalogError}</span><button className="icon-button" onClick={() => setCatalogError('')} aria-label="Dismiss notice"><X size={15} /></button>{!session && query.trim().length >= 2 && <button className="notice-action" onClick={() => { setAuthOpen(true); setAuthMode('signin'); setAuthMessage('') }}>Sign in to search live music</button>}</div>}
 
-        <section className={`section-block ${activeNav === "Your library" ? "library-hidden" : ""}`}>
+        <section className={`section-block ${activeNav === "Your library" || activeNav === "Playlist" ? "library-hidden" : ""}`}>
           <div className="section-heading"><div><div className="eyebrow">{query.trim().length >= 2 && session ? 'JAMENDO CATALOGUE' : 'THE ROTATION'}</div><h2>{catalogBusy ? 'Finding your sound…' : query ? 'Search results' : 'A good place to start'}</h2></div><button className="text-button" onClick={() => { setQuery(''); setGenre('All'); setCatalogError('') }}>View all <span>↗</span></button></div>
           <div className="genre-row">{genres.map(g => <button key={g} className={`genre-chip ${genre === g ? 'selected' : ''}`} onClick={() => setGenre(g)}>{g}</button>)}</div>
           <div className="track-table">
