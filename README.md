@@ -7,6 +7,7 @@ EMBER is a responsive, browser-based music streaming web app built with React, V
 - Responsive desktop and mobile music-player interface
 - Dark/light theme preference and liked-track preference saved in the browser
 - Supabase email/password sign-in and account creation UI
+- Account-backed liked songs and a dedicated library page
 - Authenticated live catalogue search through a Supabase Edge Function
 - Jamendo metadata mapping, album artwork and stream URL support
 - HTML audio playback controls, seek bar, volume control, next/previous track and queue panel
@@ -18,7 +19,7 @@ EMBER is a responsive, browser-based music streaming web app built with React, V
 
 The app now has the first working integration path for Supabase authentication and Jamendo catalogue search. To use it against a real provider, you must configure a Supabase project, deploy the SQL migration and Edge Function, and set the required provider secret. The default screen uses clearly labelled preview tracks until a signed-in user searches the live catalogue.
 
-**Not finished yet:** database-backed favourites and playlists, history persistence, full playlist editing, Audius adapter, richer queue/shuffle/repeat behavior, PWA install/offline support, accessibility pass, automated test coverage and production deployment. A build has not been verified in this environment; run the build steps below before deploying.
+**Not finished yet:** playlist creation/editing, play history persistence, favourite artists, Audius adapter, richer queue/shuffle/repeat behavior, PWA install/offline support, accessibility pass, automated test coverage and production deployment. A build has not been verified in this environment; run the build steps below before deploying.
 
 ## Run locally
 
@@ -43,7 +44,7 @@ Do not put a Supabase secret/service-role key or a music-provider secret in any 
 
 1. Create or select a dedicated Supabase project for EMBER.
 2. Review and apply `supabase/migrations/20261015000100_music_library.sql`.
-3. Set the Edge Function secrets `JAMENDO_CLIENT_ID` and `APP_ORIGIN` (your exact web-app origin, such as `http://localhost:5173` during local development).
+3. Set the Edge Function secrets `JAMENDO_CLIENT_ID` and `APP_ORIGIN` (your exact web-app origin, such as `http://localhost:5173` during local development). The function also uses Supabase's server-side `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` environment values; never copy the service-role key into the browser.
 4. Deploy the `music-catalog` Edge Function with JWT verification enabled.
 5. Enable the email/password auth provider in Supabase. Configure email confirmation as you prefer.
 6. Test sign-up, sign-in, catalogue search and playback before deployment.
