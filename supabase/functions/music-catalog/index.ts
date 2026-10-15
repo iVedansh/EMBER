@@ -35,7 +35,7 @@ Deno.serve(async (req: Request) => {
     offset: String((page - 1) * 20),
     namesearch: query,
     audioformat: "mp32",
-    include: "licenses",
+    include: "licenses,musicinfo",
   }).toString();
 
   try {
@@ -48,6 +48,9 @@ Deno.serve(async (req: Request) => {
     const payload = await providerResponse.json();
     const tracks = (payload.results ?? []).map((t: Record<string, unknown>) => {
       const allowed = t.audiodownload_allowed === true || t.audiodownload_allowed === "true";
+      const musicInfo = t.musicinfo as Record<string, unknown> | undefined;
+      const tagInfo = musicInfo?.tags as Record<string, unknown> | undefined;
+      const genres = Array.isArray(tagInfo?.genres) ? tagInfo.genres.map(String).slice(0, 8) : [];
       return {
         source: "jamendo",
         sourceTrackId: String(t.id ?? ""),
@@ -58,7 +61,7 @@ Deno.serve(async (req: Request) => {
         coverUrl: String(t.album_image ?? t.image ?? ""),
         audioUrl: String(t.audio ?? ""),
         durationSeconds: Number(t.duration ?? 0),
-        genreTags: [],
+        genreTags: genres,
         licenceUrl: String(t.license_ccurl ?? ""),
         downloadAllowed: allowed,
       };
