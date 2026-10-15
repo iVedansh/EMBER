@@ -98,6 +98,8 @@ export default function App() {
         setAuthMessage('')
       } else {
         setCatalogTracks([])
+        setLibraryTracks([])
+        setLiked(previous => previous.filter(id => typeof id === 'number'))
         setIsPlaying(false)
       }
     })
