@@ -75,6 +75,7 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [catalogTracks, setCatalogTracks] = useState<Track[]>([])
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([])
+  const [recentTracks, setRecentTracks] = useState<Track[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [activePlaylistId, setActivePlaylistId] = useState<string | null>(null)
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([])
@@ -110,6 +111,7 @@ export default function App() {
       } else {
         setCatalogTracks([])
         setLibraryTracks([])
+        setRecentTracks([])
         setPlaylists([])
         setPlaylistTracks([])
         setActivePlaylistId(null)
@@ -189,6 +191,54 @@ export default function App() {
       setActivePlaylistId(currentId => currentId && items.some(item => item.id === currentId) ? currentId : null)
     }
     void loadPlaylists()
+    return () => { active = false }
+  }, [session?.user.id])
+
+  useEffect(() => {
+    const client = supabase
+    if (!client || !session) {
+      setRecentTracks([])
+      return
+    }
+    let active = true
+    const loadHistory = async () => {
+      const { data, error } = await client
+        .from('play_history')
+        .select('played_at, tracks(id, source, source_track_id, title, artist_name, album, cover_url, duration_seconds, genre_tags, licence_url, download_allowed)')
+        .eq('user_id', session.user.id)
+        .order('played_at', { ascending: false })
+        .limit(8)
+      if (!active) return
+      if (error) {
+        setCatalogError('Could not load your listening history.')
+        return
+      }
+      const tracks = (data ?? []).map((row: { tracks: Record<string, unknown> | Record<string, unknown>[] | null }) => {
+        const item = Array.isArray(row.tracks) ? row.tracks[0] : row.tracks
+        if (!item || !item.source_track_id) return null
+        const tags = Array.isArray(item.genre_tags) ? item.genre_tags.map(String) : []
+        const source = String(item.source ?? 'jamendo')
+        const sourceTrackId = String(item.source_track_id)
+        return {
+          id: source + ':' + sourceTrackId,
+          databaseId: String(item.id ?? ''),
+          sourceTrackId,
+          title: String(item.title ?? 'Untitled'),
+          artist: String(item.artist_name ?? 'Unknown artist'),
+          album: String(item.album ?? 'Single'),
+          duration: formatTime(Number(item.duration_seconds ?? 0)),
+          genre: tags[0] ?? 'Music',
+          genreTags: tags,
+          cover: 'linear-gradient(140deg,#c75a2b,#322019 75%)',
+          coverUrl: String(item.cover_url ?? '') || undefined,
+          license: String(item.licence_url ?? '') || undefined,
+          downloadAllowed: item.download_allowed === true,
+          source: source === 'jamendo' ? 'Jamendo' : source,
+        } satisfies Track
+      }).filter(Boolean) as Track[]
+      setRecentTracks(tracks)
+    }
+    void loadHistory()
     return () => { active = false }
   }, [session?.user.id])
 
@@ -353,7 +403,18 @@ export default function App() {
     setCurrent(playableTrack)
     if (playableTrack.audioUrl && audioRef.current) {
       audioRef.current.src = playableTrack.audioUrl
-      void audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+      void audioRef.current.play().then(() => {
+        setIsPlaying(true)
+        if (session && supabase && playableTrack.databaseId) {
+          void supabase.from('play_history').insert({ user_id: session.user.id, track_id: playableTrack.databaseId, listened_seconds: 0 }).then(({ error }) => {
+            if (error) {
+              setCatalogError('Playback started, but listening history could not be saved.')
+              return
+            }
+            setRecentTracks(previous => [playableTrack, ...previous.filter(item => item.id !== playableTrack.id)].slice(0, 8))
+          })
+        }
+      }).catch(() => {
         setIsPlaying(false)
         setCatalogError('This track could not start. Try another result.')
       })
@@ -613,6 +674,14 @@ export default function App() {
           <div className="library-intro"><div><div className="eyebrow">YOUR PLAYLIST</div><h2>{activePlaylist?.name ?? 'Playlist'}</h2><p>{activePlaylist?.description || 'A personal collection of tracks you want to hear again.'}</p></div><div className="library-total"><ListMusic size={18} /><strong>{playlistTracks.length}</strong><span>tracks</span></div></div>
           <div className="section-heading"><div><div className="eyebrow">YOUR SELECTION</div><h2>Tracklist</h2></div><button className="text-button" onClick={() => setActiveNav('Discover')}>Add more music <span>↗</span></button></div>
           {playlistTracks.length > 0 ? <div className="track-table"><div className="table-head"><span>#</span><span>TITLE</span><span>ALBUM</span><span>TIME</span><span /></div>{playlistTracks.map((track,index) => <div key={track.id} className={`track-row ${current.id === track.id ? 'now-playing' : ''}`}><button className="row-number" onClick={() => void playTrack(track)} aria-label={`Play ${track.title}`}>{String(index+1).padStart(2,'0')}</button><button className="track-main" onClick={() => void playTrack(track)}><Cover track={track} small /><span className="track-titles"><strong>{track.title}</strong><small>{track.artist}</small></span></button><span className="album-name">{track.album}</span><span className="duration">{track.duration}</span><div className="row-actions"><button className="icon-button" title="Remove from playlist" onClick={() => void removeTrackFromPlaylist(track)}><X size={17} /></button></div></div>)}</div> : <div className="library-empty"><div className="empty-disc"><ListMusic size={25} /></div><h3>This playlist is ready for a soundtrack.</h3><p>Find music in Discover, then use the plus button on a track to add it here.</p><button className="auth-submit" onClick={() => setActiveNav('Discover')}>Discover music <span>↗</span></button></div>}
+        </section>}
+
+        {session && activeNav !== "Your library" && activeNav !== "Playlist" && recentTracks.length > 0 && <section className="section-block recent-section">
+          <div className="section-heading"><div><div className="eyebrow">YOUR LISTENING</div><h2>Recently played</h2></div><span className="text-button">Saved to your account</span></div>
+          <div className="library-track-grid">{recentTracks.slice(0, 4).map(track => <div className="library-card" key={track.id}>
+            <button className="library-card-play" onClick={() => void playTrack(track)} aria-label={"Play " + track.title}><Cover track={track} /><span className="library-play-badge"><Play size={17} fill="currentColor" /></span></button>
+            <div className="library-card-meta"><strong>{track.title}</strong><small>{track.artist}</small><div className="library-card-actions"><span>{track.duration}</span><button className="icon-button" title="Play again" onClick={() => void playTrack(track)}><Play size={15} /></button></div></div>
+          </div>)}</div>
         </section>}
 
         <section className={`bottom-grid ${activeNav === "Your library" || activeNav === "Playlist" ? "library-hidden" : ""}`}>
